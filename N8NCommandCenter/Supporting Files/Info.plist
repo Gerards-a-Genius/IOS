@@ -32,9 +32,9 @@
     <key>NSFaceIDUsageDescription</key>
     <string>N8N Command Center uses Face ID to secure your webhook configurations and API keys.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>N8N Command Center needs access to your microphone for voice input features.</string>
+    <string>We need access to your microphone to record voice messages.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>N8N Command Center uses speech recognition to convert your voice commands to text.</string>
+    <string>We need access to speech recognition to transcribe your voice messages.</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

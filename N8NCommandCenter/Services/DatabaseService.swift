@@ -135,6 +135,11 @@ class DatabaseService: ObservableObject {
         return message
     }
     
+    func deleteMessage(_ message: Message) {
+        viewContext.delete(message)
+        save()
+    }
+    
     func fetchRecentMessages(limit: Int = 100) -> [Message] {
         let request = Message.fetchRequest()
         request.sortDescriptors = [NSSortDescriptor(keyPath: \Message.timestamp, ascending: false)]

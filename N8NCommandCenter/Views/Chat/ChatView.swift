@@ -28,8 +28,23 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(viewModel.messages) { message in
-                            MessageBubble(message: message)
-                                .id(message.id)
+                            MessageBubble(
+                                message: message,
+                                onRetry: {
+                                    Task {
+                                        await viewModel.retrySendMessage(message: message)
+                                    }
+                                }
+                            )
+                            .id(message.id)
+                        }
+                        
+                        if viewModel.isAgentTyping {
+                            HStack {
+                                TypingIndicatorView()
+                                Spacer()
+                            }
+                            .id("typing-indicator")
                         }
                     }
                     .padding()
@@ -37,6 +52,13 @@ struct ChatView: View {
                 .onChange(of: viewModel.messages.count) { _ in
                     withAnimation {
                         proxy.scrollTo(viewModel.messages.last?.id, anchor: .bottom)
+                    }
+                }
+                .onChange(of: viewModel.isAgentTyping) { isTyping in
+                    if isTyping {
+                        withAnimation {
+                            proxy.scrollTo("typing-indicator", anchor: .bottom)
+                        }
                     }
                 }
             }
@@ -102,7 +124,13 @@ struct ChatView: View {
 // MARK: - Message Bubble
 struct MessageBubble: View {
     let message: Message
+    let onRetry: (() -> Void)?
     
+    init(message: Message, onRetry: (() -> Void)? = nil) {
+        self.message = message
+        self.onRetry = onRetry
+    }
+
     var body: some View {
         HStack {
             if message.isFromUser { Spacer() }
@@ -134,10 +162,19 @@ struct MessageBubble: View {
                         Image(systemName: "exclamationmark.circle")
                             .font(.caption2)
                             .foregroundColor(.red)
+                        
+                        Text("Failed")
+                            .font(.caption2)
+                            .foregroundColor(.red)
                     }
                 }
             }
             .frame(maxWidth: UIScreen.main.bounds.width * 0.75, alignment: message.isFromUser ? .trailing : .leading)
+            .onTapGesture {
+                if let onRetry = onRetry, message.metadataDecoded?.errorMessage != nil {
+                    onRetry()
+                }
+            }
             
             if !message.isFromUser { Spacer() }
         }
@@ -198,8 +235,39 @@ struct BubbleShape: Shape {
                        endAngle: Angle(degrees: 270),
                        clockwise: false)
         } else {
-            // Left-aligned bubble without tail
-            path.addRoundedRect(in: rect, cornerSize: CGSize(width: radius, height: radius))
+            // Left-aligned bubble with tail
+            path.move(to: CGPoint(x: rect.minX + tailSize + radius, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.minY + radius),
+                       radius: radius,
+                       startAngle: Angle(degrees: -90),
+                       endAngle: Angle(degrees: 0),
+                       clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+            path.addArc(center: CGPoint(x: rect.maxX - radius, y: rect.maxY - radius),
+                       radius: radius,
+                       startAngle: Angle(degrees: 0),
+                       endAngle: Angle(degrees: 90),
+                       clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX + tailSize + radius, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.minX + tailSize + radius, y: rect.maxY - radius),
+                       radius: radius,
+                       startAngle: Angle(degrees: 90),
+                       endAngle: Angle(degrees: 180),
+                       clockwise: false)
+            
+            // Tail
+            path.addLine(to: CGPoint(x: rect.minX + tailSize, y: rect.minY + radius + tailSize))
+            path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY + radius),
+                             control: CGPoint(x: rect.minX + tailSize / 2, y: rect.minY + radius))
+            path.addLine(to: CGPoint(x: rect.minX + tailSize, y: rect.minY + radius))
+
+            path.addLine(to: CGPoint(x: rect.minX + tailSize, y: rect.minY + radius))
+            path.addArc(center: CGPoint(x: rect.minX + tailSize + radius, y: rect.minY + radius),
+                       radius: radius,
+                       startAngle: Angle(degrees: 180),
+                       endAngle: Angle(degrees: 270),
+                       clockwise: false)
         }
         
         return path
@@ -266,36 +334,93 @@ struct NetworkStatusBar: View {
     }
 }
 
-// MARK: - Voice Recorder View (Placeholder)
+// MARK: - Voice Recorder View
 struct VoiceRecorderView: View {
     let onComplete: (String) -> Void
     @Environment(\.dismiss) var dismiss
+    @StateObject private var audioService = AudioService()
     
     var body: some View {
         NavigationView {
-            VStack {
-                Text("Voice Recording")
-                    .font(.title)
+            VStack(spacing: 20) {
+                Spacer()
                 
-                // Placeholder for voice recording UI
-                Image(systemName: "mic.circle.fill")
-                    .font(.system(size: 100))
-                    .foregroundColor(.accentOrange)
+                // Live Transcript
+                Text(audioService.transcript.isEmpty ? "Recording..." : audioService.transcript)
+                    .font(.title2)
+                    .fontWeight(.medium)
+                    .multilineTextAlignment(.center)
+                    .padding()
+                    .frame(minHeight: 100)
                 
-                Button("Done") {
-                    onComplete("Voice message transcript")
+                // Recording Button
+                Button(action: {
+                    if audioService.isRecording {
+                        audioService.stopRecording()
+                    } else {
+                        audioService.startRecording()
+                    }
+                }) {
+                    Image(systemName: audioService.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                        .font(.system(size: 80))
+                        .foregroundColor(audioService.isRecording ? .red : .accentOrange)
                 }
-                .buttonStyle(.borderedProminent)
+                
+                if let error = audioService.error {
+                    Text("Error: \(error.localizedDescription)")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                }
+                
+                Spacer()
             }
+            .padding()
             .navigationTitle("Record Voice")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
+                        if audioService.isRecording {
+                            audioService.stopRecording()
+                        }
                         dismiss()
                     }
                 }
             }
+            .onAppear {
+                audioService.requestPermissions()
+            }
+            .onReceive(audioService.transcriptionPublisher) { transcript in
+                onComplete(transcript)
+                dismiss()
+            }
+        }
+    }
+}
+
+// MARK: - Typing Indicator
+struct TypingIndicatorView: View {
+    @State private var scale: CGFloat = 0.5
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3) { index in
+                Circle()
+                    .frame(width: 8, height: 8)
+                    .scaleEffect(scale)
+                    .animation(
+                        .easeInOut(duration: 0.6)
+                            .repeatForever()
+                            .delay(0.2 * Double(index)),
+                        value: scale
+                    )
+            }
+        }
+        .padding(12)
+        .background(Color(.systemGray5))
+        .clipShape(BubbleShape(isFromUser: false))
+        .onAppear {
+            scale = 1.0
         }
     }
 }
@@ -305,6 +430,7 @@ struct VoiceRecorderView: View {
 class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isLoading = false
+    @Published var isAgentTyping = false
     @Published var error: Error?
     
     private let conversation: Conversation
@@ -334,6 +460,7 @@ class ChatViewModel: ObservableObject {
         
         // Send to webhook
         isLoading = true
+        isAgentTyping = true
         error = nil
         
         do {
@@ -366,6 +493,18 @@ class ChatViewModel: ObservableObject {
         }
         
         isLoading = false
+        isAgentTyping = false
+    }
+    
+    func retrySendMessage(message: Message) async {
+        guard let content = message.content else { return }
+        
+        // Remove the old failed message
+        databaseService.deleteMessage(message)
+        loadMessages()
+        
+        // Send it again
+        await sendMessage(content)
     }
 }
 
